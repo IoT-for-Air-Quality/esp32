@@ -34,6 +34,8 @@ float dustDensity = 0;
 
 boolean mobile;
 
+boolean transmitingData;
+
 
 //--------------------------------------------------------------
 //              Initializw NVS
@@ -269,41 +271,55 @@ void loadConfigNVS(){
  
 }
 
-void setup() { 
-   mobile = false;
-   pinMode(LED_BUILTIN, OUTPUT);
-   Serial.begin(115200);
-   loadConfigNVS();
-   
-   pinMode(ledPowerDust,OUTPUT);
+//--------------------------------------------------------------
+//              Connect to a wifi network
+//--------------------------------------------------------------
+void configureWifi(){
+   printf("\n");
    WiFi.mode(WIFI_STA);
+   printf("WiFi mode configurated STA \n");
+   printf("Disconnecting to current network ... ");
    WiFi.disconnect();
+   printf("Done \n");
    delay(100);
 
-   Serial.println("Conectando...");
+   printf("Connecting to %s ... ", wifi_ssid);
    WiFi.begin(wifi_ssid, wifi_password);
 
    while (WiFi.status() != WL_CONNECTED) {
-    Serial.print(WiFi.status());
       delay(500);
    }
+   printf("Done \n");
+   
    IPAddress myIP = WiFi.localIP();
-   Serial.print("AP IP address: ");
-   Serial.println(myIP);
-   Serial.println("Conectado ");
+   printf("Device IP: %s \n",myIP);
+  }
 
+
+
+//--------------------------------------------------------------
+//              Setup
+//--------------------------------------------------------------
+void setup() { 
+   transmitingData= false;
+   pinMode(LED_BUILTIN, OUTPUT);
+   pinMode(ledPowerDust,OUTPUT);
+   Serial.begin(115200);
+   loadConfigNVS();
+   configureWifi();  
    client.setServer("test.mosquitto.org", 1883);
 }
 
 
-void readSensors(){
-  int gassensorMq7Analog = analogRead(Gas_MQ7_analog);
-  int gassensorMq7Digital = digitalRead(Gas_MQ7_digital);
-  int gassensorMq135Analog = analogRead(Gas_MQ135_analog);
-  int gassensorMq135Digital = digitalRead(Gas_MQ135_digital);
+//--------------------------------------------------------------
+//              Verify connection with broker
+//--------------------------------------------------------------
+void verifyBrokerConnection(){
   if (!client.connected()) {
+    transmitingData = false;
     Serial.println("Conectando con cliente");
       if (client.connect("CUPCARBON-ID")) {
+        transmitingData = true;
          digitalWrite(LED_BUILTIN, 1);
          delay(100);
          digitalWrite(LED_BUILTIN, 0);
@@ -314,6 +330,20 @@ void readSensors(){
          delay(100);
       } 
    }
+  
+  }
+
+
+
+//--------------------------------------------------------------
+//              Read and publish all sensor data
+//--------------------------------------------------------------
+void readSensors(){
+  int gassensorMq7Analog = analogRead(Gas_MQ7_analog);
+  int gassensorMq7Digital = digitalRead(Gas_MQ7_digital);
+  int gassensorMq135Analog = analogRead(Gas_MQ135_analog);
+  int gassensorMq135Digital = digitalRead(Gas_MQ135_digital);
+  
 
 
   digitalWrite(ledPowerDust,LOW);
@@ -337,12 +367,15 @@ void readSensors(){
    client.publish("AQ/ESP32/CO",itoa(gassensorMq7Analog, cstr, 10) );
    client.publish("AQ/ESP32/CO2",itoa(gassensorMq135Analog, cstr, 10) );
    client.publish("AQ/ESP32/DUST",itoa((int)dustSensor, cstr, 10) );
-   
+   delay(sample_time);
   }
 
+//--------------------------------------------------------------
+//              Blink LED for config mode
+//--------------------------------------------------------------
 boolean blinkConfig(){
 
-  for (int i=1;i<=20;i++){
+  for (int i=1;i<=10;i++){
     delay(100);
     digitalWrite(LED_BUILTIN, HIGH);
     delay(100);
@@ -364,6 +397,11 @@ void callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
     Serial.println("BT Client disconnected");
   }
 }
+
+
+//--------------------------------------------------------------
+//              Split string
+//--------------------------------------------------------------
  String getValue(String data, char separator, int index)
 {
   int found = 0;
@@ -381,123 +419,108 @@ void callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
   return found>index ? data.substring(strIndex[0], strIndex[1]) : "";
 }
 
+
+//--------------------------------------------------------------
+//              Config mode 
+//--------------------------------------------------------------
 void configModule(){
   SerialBT.register_callback(callback);
   SerialBT.begin("IOT-AQ-ID");
   Serial.println("The device started, now you can pair it with bluetooth!");
   boolean finished = false;
-  
-    
-
       while(!finished){
-        bool other=true;
         String option = readBTMSJ();
-        
-                if(option == "MOBILE\r\n"){
-          mobile=true;
-          SerialBT.println("OK");
-          other=false;
-          }
-         if(option == "STATIC\r\n"){
-          mobile=true;
-          other=false;
-          SerialBT.println("OK");
-          
-          }
-        if(option == "EXIT\r\n"){
-          finished=true;
-          //ESP.restart();
-          other=false;
-          }
-
-         if(option == "HELLO\r\n"){
-          
-            Serial.println("Connected correctly");
-            Serial.println(String(id));
-            Serial.println(id);
-            SerialBT.println("HELLO");
-            SerialBT.println("ID:"+String(id));
-            SerialBT.println("WIFI-SSID:"+String(wifi_ssid));
-            SerialBT.println("WIFI-PASS:"+String(wifi_password));
-            SerialBT.println("IP-BROKER:"+String(ip_broker));
-            SerialBT.println("PORT:"+String(port));
-            SerialBT.println("MOBILE:"+String(mobile));
-            SerialBT.println("OK");
-            other=false;
-              
-        }
-        if(other){
-          // copying the contents of the
-        // string to char array
-
-        String token = getValue(option,':',1);
-
-        if(token!= NULL){
-                Serial.println("algos");
-                String value = getValue(option,':',0);
-                char i[50];
-                value.toCharArray(i, 50);
-                
-                char* info;
-                info = (char*)malloc(50); /* make space for the new string (should check the return value ...) */
-                strcpy(info, i);
-                
-              if (String(token) == "ID\r\n"){
-                  
-                  id = info;  
-                  writeIdNVS(id);           
-                  SerialBT.println("OK");
-                  
-                  }
-      
-                if (String(token) == "IP\r\n"){
-                  
-                  ip_broker = info;   
-                  writeBrokerNVS(ip_broker, port);
-                  SerialBT.println("OK");
-                  }
-      
-                  
-                if (String(token) == "WIFI-SSID\r\n"){
-                  wifi_ssid= info;
-                  writeWifiNVS(wifi_ssid, wifi_password);
-                  SerialBT.println("OK");
-                  }
-      
-                 if (String(token) == "WIFI-PASS\r\n"){
-                  wifi_password= info;
-                  writeWifiNVS(wifi_ssid, wifi_password);
-                  SerialBT.println("OK");
-                  }
-      
-                  if (String(token) == "PORT\r\n"){
-                  int i;
-                  sscanf(info, "%d", &i);
-                  port= i;
-                  writeBrokerNVS(ip_broker, port);
-                  SerialBT.println("OK");
-                  }
-                
-
-          }
-        
-
-          
-          }
-
-      
+        finished = processBT(option);      
       }
+}
 
+//--------------------------------------------------------------
+//              Process command BT modifiers
+//--------------------------------------------------------------
+void processModifiersBT(String option){
+  
+  // copying the contents of the
+  // string to char array
+  String token = getValue(option,':',1);
+  if(token!= NULL){              
+    String value = getValue(option,':',0);
+    char i[50];
+    value.toCharArray(i, 50);
     
+    char* info;
+    info = (char*)malloc(50); 
+    strcpy(info, i);
+    
+    if(String(token) == "ID\r\n"){
+      id = info;  
+      writeIdNVS(id); 
+    } else if (String(token)=="IP\r\n"){
+      ip_broker = info;   
+      writeBrokerNVS(ip_broker, port);
+      
+    } else if (String(token)=="WIFI-SSID\r\n"){
+      wifi_ssid = info;
+      writeWifiNVS(wifi_ssid, wifi_password);
+    } else if (String(token)=="WIFI-PASS\r\n"){
+      wifi_password= info;
+      writeWifiNVS(wifi_ssid, wifi_password);
+    } else if (String(token)=="PORT\r\n"){
+      int i;
+      sscanf(info, "%d", &i);
+      port= i;
+      writeBrokerNVS(ip_broker, port);
+    } else {
+      
+    }
 
   }
+}
 
+//--------------------------------------------------------------
+//              Process command BT
+//--------------------------------------------------------------
+boolean processBT(String option){
+    if(option == "MOBILE\r\n"){
+        mobile=true;   
+    } else if (option == "STATIC\r\n"){
+        mobile=false;
+    } else if (option == "EXIT\r\n"){
+        SerialBT.println("OK");
+        return true;
+    } else if (option == "RESTART\r\n"){
+        SerialBT.println("OK");
+        ESP.restart();
+    } else if (option == "HELLO\r\n"){
+        SerialBT.println("HELLO");
+        SerialBT.println("ID:"+String(id));
+        SerialBT.println("WIFI-SSID:"+String(wifi_ssid));
+        SerialBT.println("WIFI-PASS:"+String(wifi_password));
+        SerialBT.println("IP-BROKER:"+String(ip_broker));
+        SerialBT.println("PORT:"+String(port));
+        SerialBT.println("MOBILE:"+String(mobile));
+        SerialBT.println("OK");
+    } else {
+        processModifiersBT(option);  
+    }
+    SerialBT.println("OK");
+    return false;
+  
+}
+
+
+//--------------------------------------------------------------
+//             Read BT serial Message
+//--------------------------------------------------------------
 String readBTMSJ(){
   while(!SerialBT.available()){
     }
   return SerialBT.readString();
   }
-  
+
+
+//--------------------------------------------------------------
+//              Loop
+//--------------------------------------------------------------
 void loop() {
   digitalWrite(LED_BUILTIN, LOW);
   int Push_button_state = digitalRead(Config_pin);
@@ -511,8 +534,11 @@ void loop() {
     }
     else 
     {
-     readSensors();
-    }
-   delay(sample_time);
+     verifyBrokerConnection();
+     if (transmitingData){
+      readSensors();
+    
+      }
+     }
    client.loop();
 }
