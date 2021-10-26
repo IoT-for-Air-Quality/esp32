@@ -1,5 +1,8 @@
 #include <WiFi.h>
 #include <PubSubClient.h>
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEServer.h>
 #include "BluetoothSerial.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
@@ -21,7 +24,7 @@ int LED_BUILTIN = 2;
 
 int DustAnalog = 32;
 int ledPowerDust = 18;
-
+   
 int Config_pin = 19;
 
 int Gas_MQ135_analog = 34;
@@ -159,9 +162,9 @@ void writeIdNVS(char * pId){
 }
 
 //--------------------------------------------------------------
-//              Write wifi info on NVS
+//              Write wifi SSID on NVS
 //--------------------------------------------------------------
-void writeWifiNVS(char * ssid, char * pass){
+void writeWifiSsidNVS(char * ssid){
      // Open
     printf("\n");
     printf("Opening Non-Volatile Storage (NVS) handle... ");
@@ -173,6 +176,27 @@ void writeWifiNVS(char * ssid, char * pass){
         printf("Done\n");
 
         writeStringNVS(my_handle, "wifi-ssid", ssid);  
+
+        // Close
+        nvs_close(my_handle);
+    }
+
+    printf("\n");
+}
+//--------------------------------------------------------------
+//              Write wifi info on NVS
+//--------------------------------------------------------------
+void writeWifiPassNVS(char * pass){
+     // Open
+    printf("\n");
+    printf("Opening Non-Volatile Storage (NVS) handle... ");
+    nvs_handle my_handle;
+    esp_err_t err = nvs_open("storage", NVS_READWRITE, &my_handle);
+    if (err != ESP_OK) {
+        printf("Error (%s) opening NVS handle!\n", esp_err_to_name(err));
+    } else {
+        printf("Done\n");
+
         writeStringNVS(my_handle, "wifi-pass", pass);  
         
 
@@ -271,6 +295,7 @@ void loadConfigNVS(){
  
 }
 
+
 //--------------------------------------------------------------
 //              Connect to a wifi network
 //--------------------------------------------------------------
@@ -296,18 +321,187 @@ void configureWifi(){
   }
 
 
+//--------------------------------------------------------------
+//              BLE CHARACTERISTICS
+//--------------------------------------------------------------
+#define SERVICE_UUID        "0000180A-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_NAME_UUID "00002A00-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_ID_UUID "00002A23-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_SWV "00002A28-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_ALERT "00002A3F-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_TYPE "00003000-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_LAT "00002AAE-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_LONG "00002AAF-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_WIFI_SSID "00003001-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_WIFI_PASS "00003002-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_WIFI_PASS2 "00004002-0000-1000-8000-00805F9B34FB"
+
+
+BLECharacteristic *pCharacteristicName;
+BLECharacteristic *pCharacteristicID;
+BLECharacteristic *pCharacteristicSWV;
+BLECharacteristic *pCharacteristicLat;
+BLECharacteristic *pCharacteristicLong;
+BLECharacteristic *pCharacteristicAlert;
+BLECharacteristic *pCharacteristicType;
+
+BLECharacteristic *pCharacteristicSSID;
+BLECharacteristic *pCharacteristicPASS;
+BLECharacteristic *pCharacteristicPASS2;
+
+class MyCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+      std::string rxValue = pCharacteristic->getValue();
+      String dataRecibed;
+      if (rxValue.length() > 0) {
+        for (int i = 0; i < rxValue.length(); i++){
+          dataRecibed+=rxValue[i];
+          }
+      }
+      String value = dataRecibed;
+      char i[50];
+      value.toCharArray(i, 50);
+  
+      char* info;
+      info = (char*)malloc(50); 
+      strcpy(info, i);
+      if ( (pCharacteristic->getUUID()).equals(BLEUUID(CHARACTERISTIC_ID_UUID))  ){
+        id = info;  
+        writeIdNVS(id); 
+        }
+
+      if ( (pCharacteristic->getUUID()).equals(BLEUUID(CHARACTERISTIC_UUID_WIFI_SSID))  ){
+        wifi_ssid = info;  
+        writeWifiSsidNVS(wifi_ssid); 
+        }
+
+      if ( (pCharacteristic->getUUID()).equals(BLEUUID(CHARACTERISTIC_UUID_WIFI_PASS))  ){
+        wifi_password = info;  
+        writeWifiPassNVS(wifi_password); 
+        delay(5000);
+        configureWifi();
+        }
+      
+      
+    }
+};
+//--------------------------------------------------------------
+//              LOAD BLE CHARACTERISTICS
+//--------------------------------------------------------------
+void initializeCharacteristics(){
+  BLEDevice::init("AQ-IoT Node");
+  BLEServer *pServer = BLEDevice::createServer();
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+  pCharacteristicName = pService->createCharacteristic(
+                                         CHARACTERISTIC_NAME_UUID,
+                                         BLECharacteristic::PROPERTY_READ |
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
+  pCharacteristicID = pService->createCharacteristic(
+                                         CHARACTERISTIC_ID_UUID,
+                                         BLECharacteristic::PROPERTY_READ |
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
+
+
+  pCharacteristicLat = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID_LAT,
+                                         BLECharacteristic::PROPERTY_READ |
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
+
+  pCharacteristicLong = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID_LONG,
+                                         BLECharacteristic::PROPERTY_READ |
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
+
+  pCharacteristicSSID = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID_WIFI_SSID,
+                                         BLECharacteristic::PROPERTY_READ |
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
+
+  pCharacteristicPASS = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID_WIFI_PASS,
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
+ pCharacteristicPASS2 = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID_WIFI_PASS2,
+                                         BLECharacteristic::PROPERTY_READ |
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
+                                       
+
+  pCharacteristicType = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID_TYPE,
+                                         BLECharacteristic::PROPERTY_READ |
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
+  pCharacteristicAlert = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID_ALERT,
+                                         BLECharacteristic::PROPERTY_READ |
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
+  pCharacteristicSWV = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID_SWV,
+                                         BLECharacteristic::PROPERTY_READ |
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
+
+  pCharacteristicName->setValue("Sensor calidad aire");
+  pCharacteristicName->setCallbacks(new MyCallbacks());
+  pCharacteristicID->setValue(id);
+  pCharacteristicID->setCallbacks(new MyCallbacks());
+  pCharacteristicSWV->setValue("v0.1 - Oct 2020");
+  pCharacteristicSWV->setCallbacks(new MyCallbacks());
+  pCharacteristicAlert->setValue("None");
+  pCharacteristicAlert->setCallbacks(new MyCallbacks());  
+  pCharacteristicType->setValue("none");
+  pCharacteristicType->setCallbacks(new MyCallbacks());
+  pCharacteristicLat->setValue("0");
+  pCharacteristicLat->setCallbacks(new MyCallbacks());
+  pCharacteristicLong->setValue("0");
+  pCharacteristicLong->setCallbacks(new MyCallbacks());
+  pCharacteristicSSID->setValue(wifi_ssid);
+  pCharacteristicSSID->setCallbacks(new MyCallbacks());
+  pCharacteristicPASS->setValue(wifi_password);
+  pCharacteristicPASS->setCallbacks(new MyCallbacks());
+  pCharacteristicPASS2->setValue(wifi_password);
+  pCharacteristicPASS->setCallbacks(new MyCallbacks());
+  pService->start();
+  // BLEAdvertising *pAdvertising = pServer->getAdvertising();  // this still is working for backward compatibility
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);  // functions that help with iPhone connections issue
+  pAdvertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
+
+  
+  
+  
+  }
+
+
+
 
 //--------------------------------------------------------------
 //              Setup
 //--------------------------------------------------------------
 void setup() { 
+   printf("Started IoT node");
    transmitingData= false;
    pinMode(LED_BUILTIN, OUTPUT);
    pinMode(ledPowerDust,OUTPUT);
    Serial.begin(115200);
    loadConfigNVS();
-   configureWifi();  
-   client.setServer("test.mosquitto.org", 1883);
+   if(strcmp(id, "0") == 0){}else{
+   configureWifi();
+    
+    }
+   initializeCharacteristics();  
+   client.setServer("35.237.59.165", 1883);
 }
 
 
@@ -318,6 +512,9 @@ void verifyBrokerConnection(){
   if (!client.connected()) {
     transmitingData = false;
     Serial.println("Conectando con cliente");
+    IPAddress myIP = WiFi.localIP();
+   printf("Device IP: %s \n",myIP);
+   Serial.println(myIP);
       if (client.connect("CUPCARBON-ID")) {
         transmitingData = true;
          digitalWrite(LED_BUILTIN, 1);
@@ -364,9 +561,33 @@ void readSensors(){
   }
   //----
    char cstr[16];
-   client.publish("AQ/ESP32/CO",itoa(gassensorMq7Analog, cstr, 10) );
-   client.publish("AQ/ESP32/CO2",itoa(gassensorMq135Analog, cstr, 10) );
-   client.publish("AQ/ESP32/DUST",itoa((int)dustSensor, cstr, 10) );
+
+   String value = "AQ/Measurement/";
+      char i[50];
+      value.toCharArray(i, 50);
+  
+      char* info;
+      info = (char*)malloc(50); 
+      strcpy(info, i);
+      strcat (info,id );
+      char* info1;
+      info1 = (char*)malloc(50);
+      strcpy(info1, info);
+      strcat (info1,"/CO" );
+      char* info2;
+      info2 = (char*)malloc(50);
+      strcpy(info2, info);
+      strcat (info2,"/CO2" );
+      char* info3;
+      info3 = (char*)malloc(50);
+      strcpy(info3, info);
+      strcat (info3,"/PM2.5" );
+     Serial.println(info1); 
+     Serial.println(info2);
+     Serial.println(info3);
+   client.publish(info1,itoa(gassensorMq7Analog, cstr, 10) );
+   client.publish(info2,itoa(gassensorMq135Analog, cstr, 10) );
+   client.publish(info3,itoa((int)dustSensor, cstr, 10) );
    delay(sample_time);
   }
 
@@ -460,10 +681,10 @@ void processModifiersBT(String option){
       
     } else if (String(token)=="WIFI-SSID\r\n"){
       wifi_ssid = info;
-      writeWifiNVS(wifi_ssid, wifi_password);
+//      writeWifiNVS(wifi_ssid, wifi_password);
     } else if (String(token)=="WIFI-PASS\r\n"){
       wifi_password= info;
-      writeWifiNVS(wifi_ssid, wifi_password);
+//      writeWifiNVS(wifi_ssid, wifi_password);
     } else if (String(token)=="PORT\r\n"){
       int i;
       sscanf(info, "%d", &i);
@@ -534,11 +755,17 @@ void loop() {
     }
     else 
     {
-     verifyBrokerConnection();
+      if(strcmp(id, "0") == 0){
+        blinkConfig();
+        }
+        else{
+          verifyBrokerConnection();
      if (transmitingData){
       readSensors();
     
       }
+          }
+     
      }
    client.loop();
 }
