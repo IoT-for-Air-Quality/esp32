@@ -13,6 +13,27 @@ char* wifi_password;
 char* ip_broker;
 int port;
 int sample_time;
+
+//MQ7
+float RS_gas = 0;
+
+float ratio = 0;
+
+float sensorValue = 0;
+
+float sensor_volt = 0;
+
+float R0 = 7200.0;
+
+//MQ135
+float sensorValueMQ135 = 0;
+float sensor_voltMQ135 = 0;
+float a = 5.5973021420;
+float b = -0.365425824;
+float R0_MQ135 = 7200.0;
+float R_L = 20000.0;
+
+
 WiFiClient espClient;
 PubSubClient client(ip_broker,port,espClient);
 BluetoothSerial SerialBT;
@@ -561,6 +582,7 @@ void readSensors(){
   }
   //----
    char cstr[16];
+   char cstrMQ135[16];
 
    String value = "AQ/Measurement/";
       char i[50];
@@ -585,8 +607,25 @@ void readSensors(){
      Serial.println(info1); 
      Serial.println(info2);
      Serial.println(info3);
-   client.publish(info1,itoa(gassensorMq7Analog, cstr, 10) );
-   client.publish(info2,itoa(gassensorMq135Analog, cstr, 10) );
+  sensorValue = analogRead(Gas_MQ7_analog);
+  
+      sensor_volt = sensorValue/1024*5.0;
+      RS_gas = (5.0-sensor_volt)/sensor_volt;
+      ratio = RS_gas/R0;
+      float x = 1538.46 * ratio;
+      float ppm = pow(x,-1.709);
+      gcvt(ppm, 3, cstr);
+
+      // MQ135
+
+      sensorValueMQ135 = analogRead(Gas_MQ135_analog);
+//      sensorValueMQ135 = analogRead(Gas_MQ7_analog);
+      sensor_voltMQ135 = sensorValueMQ135/1024*5.0;
+      float ppmMQ135 = pow(((R_L*(1/sensor_voltMQ135-1))/R0_MQ135)/a,1/b);
+      gcvt(ppmMQ135, 3, cstrMQ135);
+      
+   client.publish(info1,cstr );
+   client.publish(info2,cstrMQ135 );
    client.publish(info3,itoa((int)dustSensor, cstr, 10) );
    delay(sample_time);
   }
