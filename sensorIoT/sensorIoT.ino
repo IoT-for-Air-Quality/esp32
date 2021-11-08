@@ -7,6 +7,8 @@
 #include "esp_system.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "MQ135.h"
+
 char * id;
 char* wifi_ssid;
 char* wifi_password;
@@ -55,8 +57,9 @@ int Gas_MQ7_digital = 5;
 float dustSensor = 0;
 float calcVoltage = 0;
 float dustDensity = 0;
-
+MQ135 gasSensor = MQ135(Gas_MQ135_analog);
 boolean mobile;
+float ppmMQ135 = 0;
 
 boolean transmitingData;
 
@@ -582,6 +585,8 @@ void readSensors(){
   }
   //----
    char cstr[16];
+   
+   char cstrPolvo[16];
    char cstrMQ135[16];
 
    String value = "AQ/Measurement/";
@@ -615,18 +620,19 @@ void readSensors(){
       float x = 1538.46 * ratio;
       float ppm = pow(x,-1.709);
       gcvt(ppm, 3, cstr);
+      gcvt(dustDensity, 3, cstrPolvo);
 
       // MQ135
-
+ppmMQ135 = gasSensor.getPPM();
       sensorValueMQ135 = analogRead(Gas_MQ135_analog);
 //      sensorValueMQ135 = analogRead(Gas_MQ7_analog);
       sensor_voltMQ135 = sensorValueMQ135/1024*5.0;
-      float ppmMQ135 = pow(((R_L*(1/sensor_voltMQ135-1))/R0_MQ135)/a,1/b);
-      gcvt(ppmMQ135, 3, cstrMQ135);
+//      float ppmMQ135 = pow(((R_L*(1/sensor_voltMQ135-1))/R0_MQ135)/a,1/b);
+      gcvt(ppmMQ135/10000, 3, cstrMQ135);
       
    client.publish(info1,cstr );
    client.publish(info2,cstrMQ135 );
-   client.publish(info3,itoa((int)dustSensor, cstr, 10) );
+   client.publish(info3,cstrPolvo );
    delay(sample_time);
   }
 
