@@ -7,14 +7,25 @@
 #include "esp_system.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "FS.h"
+#include "SPIFFS.h"
+#include "time.h"
 #include "MQ135.h"
 
+#define FORMAT_SPIFFS_IF_FAILED true
 char * id;
 char* wifi_ssid;
 char* wifi_password;
 char* ip_broker;
 int port;
 int sample_time;
+
+const char* ntpServer = "pool.ntp.org";
+const long  gmtOffset_sec = -5*3600;
+const int   daylightOffset_sec = 3600;
+char fileCO[30];
+char fileCO2[30];
+char filePM[30];
 
 //MQ7
 float RS_gas = 0;
@@ -320,6 +331,251 @@ void loadConfigNVS(){
 }
 
 
+
+//--------------------------------------------------------------
+//              SPIFFS
+//--------------------------------------------------------------
+
+
+void printLocalTime()
+{
+  struct tm timeinfo;
+  if(!getLocalTime(&timeinfo)){
+    Serial.println("Failed to obtain time");
+    return;
+  }
+  Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
+}
+
+void listDir(fs::FS &fs, const char * dirname, uint8_t levels){
+    Serial.printf("Listing directory: %s\r\n", dirname);
+
+    File root = fs.open(dirname);
+    if(!root){
+        Serial.println("- failed to open directory");
+        return;
+    }
+    if(!root.isDirectory()){
+        Serial.println(" - not a directory");
+        return;
+    }
+
+    File file = root.openNextFile();
+    while(file){
+        if(file.isDirectory()){
+            Serial.print("  DIR : ");
+            Serial.println(file.name());
+            if(levels){
+                listDir(fs, file.name(), levels -1);
+            }
+        } else {
+            Serial.print("  FILE: ");
+            Serial.print(file.name());
+            Serial.print("\tSIZE: ");
+            Serial.println(file.size());
+        }
+        file = root.openNextFile();
+    }
+}
+
+
+
+void readFile(fs::FS &fs, const char * path){
+    Serial.printf("Reading file: %s\r\n", path);
+
+    File file = fs.open(path);
+    if(!file || file.isDirectory()){
+        Serial.println("- failed to open file for reading");
+        return;
+    }
+
+    Serial.println("- read from file:");
+    while(file.available()){
+        Serial.write(file.read());
+    }
+    file.close();
+}
+
+void writeFile(fs::FS &fs, const char * path, const char * message){
+    Serial.printf("Writing file: %s\r\n", path);
+
+    File file = fs.open(path, FILE_WRITE);
+    if(!file){
+        Serial.println("- failed to open file for writing");
+        return;
+    }
+    if(file.print(message)){
+        Serial.println("- file written");
+    } else {
+        Serial.println("- write failed");
+    }
+    file.close();
+}
+
+void appendFile(fs::FS &fs, const char * path, const char * message){
+    Serial.printf("Appending to file: %s\r\n", path);
+
+    File file = fs.open(path, FILE_APPEND);
+    if(!file){
+        Serial.println("- failed to open file for appending");
+        return;
+    }
+    if(file.print(message)){
+        Serial.println("- message appended");
+    } else {
+        Serial.println("- append failed");
+    }
+    file.close();
+}
+
+void renameFile(fs::FS &fs, const char * path1, const char * path2){
+    Serial.printf("Renaming file %s to %s\r\n", path1, path2);
+    if (fs.rename(path1, path2)) {
+        Serial.println("- file renamed");
+    } else {
+        Serial.println("- rename failed");
+    }
+}
+
+void deleteFile(fs::FS &fs, const char * path){
+    Serial.printf("Deleting file: %s\r\n", path);
+    if(fs.remove(path)){
+        Serial.println("- file deleted");
+    } else {
+        Serial.println("- delete failed");
+    }
+}
+
+
+void clearDir(fs::FS &fs, const char * dirname, uint8_t levels){
+    Serial.printf("Clearing directory: %s\r\n", dirname);
+
+    File root = fs.open(dirname);
+    if(!root){
+        Serial.println("- failed to open directory");
+        return;
+    }
+    if(!root.isDirectory()){
+        Serial.println(" - not a directory");
+        return;
+    }
+
+    File file = root.openNextFile();
+    while(file){
+        if(file.isDirectory()){
+            Serial.print("  DIR : ");
+            Serial.println(file.name());
+            if(levels){
+                listDir(fs, file.name(), levels -1);
+            }
+        } else {
+            Serial.print("  FILE: ");
+            Serial.print(file.name());
+            Serial.print("\tSIZE: ");
+            Serial.println(file.size());
+            deleteFile(SPIFFS, file.name());
+        }
+        file = root.openNextFile();
+    }
+}
+
+void testFileIO(fs::FS &fs, const char * path){
+    Serial.printf("Testing file I/O with %s\r\n", path);
+
+    static uint8_t buf[512];
+    size_t len = 0;
+    File file = fs.open(path, FILE_WRITE);
+    if(!file){
+        Serial.println("- failed to open file for writing");
+        return;
+    }
+
+    size_t i;
+    Serial.print("- writing" );
+    uint32_t start = millis();
+    for(i=0; i<2048; i++){
+        if ((i & 0x001F) == 0x001F){
+          Serial.print(".");
+        }
+        file.write(buf, 512);
+    }
+    Serial.println("");
+    uint32_t end = millis() - start;
+    Serial.printf(" - %u bytes written in %u ms\r\n", 2048 * 512, end);
+    file.close();
+
+    file = fs.open(path);
+    start = millis();
+    end = start;
+    i = 0;
+    if(file && !file.isDirectory()){
+        len = file.size();
+        size_t flen = len;
+        start = millis();
+        Serial.print("- reading" );
+        while(len){
+            size_t toRead = len;
+            if(toRead > 512){
+                toRead = 512;
+            }
+            file.read(buf, toRead);
+            if ((i++ & 0x001F) == 0x001F){
+              Serial.print(".");
+            }
+            len -= toRead;
+        }
+        Serial.println("");
+        end = millis() - start;
+        Serial.printf("- %u bytes read in %u ms\r\n", flen, end);
+        file.close();
+    } else {
+        Serial.println("- failed to open file for reading");
+    }
+}
+
+
+void configFiles(){
+  struct tm timeinfo;
+    if(!getLocalTime(&timeinfo)){
+      Serial.println("Failed to obtain time");
+      return;
+    }   
+  strftime(fileCO,30, "/CO#%Y-%b-%d.txt", &timeinfo);
+  strftime(fileCO2,30, "/CO2#%Y-%b-%d.txt", &timeinfo);
+  strftime(filePM,30, "/PM#%Y-%b-%d.txt", &timeinfo);
+  //Check if files exist
+  if (!SPIFFS.exists(fileCO)){
+    writeFile(SPIFFS, fileCO, "CO data\r\n");  
+  }
+  if (!SPIFFS.exists(fileCO2)){
+    writeFile(SPIFFS, fileCO2, "CO2 data\r\n");
+  }
+  if (!SPIFFS.exists(filePM)){
+    writeFile(SPIFFS, filePM, "PM data\r\n"); 
+  } 
+}
+
+void storeData(char * coValue, char * co2Value, char * pmValue ){
+  struct tm timeinfo;
+    if(!getLocalTime(&timeinfo)){
+      Serial.println("Failed to obtain time");
+      return;
+    }
+  char hour[9];
+  strftime(hour,9, "%H:%M:%S", &timeinfo);
+
+  char lineCO [16];
+  strcpy(lineCO,hour);
+  strcat(lineCO,"-");
+  strcat(lineCO,coValue);
+  strcat(lineCO,"\r\n");
+ 
+  appendFile(SPIFFS, fileCO, lineCO);
+  appendFile(SPIFFS, fileCO2, "World!\r\n");
+  appendFile(SPIFFS, filePM, "World!\r\n");
+
+}
+
 //--------------------------------------------------------------
 //              Connect to a wifi network
 //--------------------------------------------------------------
@@ -342,6 +598,10 @@ void configureWifi(){
    
    IPAddress myIP = WiFi.localIP();
    printf("Device IP: %s \n",myIP);
+   //Updates time for the esp32
+   printLocalTime();
+   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+   printLocalTime();
   }
 
 
@@ -525,6 +785,13 @@ void setup() {
     
     }
    initializeCharacteristics();  
+   // Initialize SPIFFS
+   if(!SPIFFS.begin(FORMAT_SPIFFS_IF_FAILED)){
+        Serial.println("SPIFFS Mount Failed");
+        return;
+    }
+    configFiles();
+    listDir(SPIFFS, "/", 0);
    client.setServer("35.237.59.165", 1883);
 }
 
@@ -609,10 +876,7 @@ void readSensors(){
       info3 = (char*)malloc(50);
       strcpy(info3, info);
       strcat (info3,"/PM2.5" );
-     Serial.println(info1); 
-     Serial.println(info2);
-     Serial.println(info3);
-  sensorValue = analogRead(Gas_MQ7_analog);
+     sensorValue = analogRead(Gas_MQ7_analog);
   
       sensor_volt = sensorValue/1024*5.0;
       RS_gas = (5.0-sensor_volt)/sensor_volt;
@@ -633,6 +897,10 @@ ppmMQ135 = gasSensor.getPPM();
    client.publish(info1,cstr );
    client.publish(info2,cstrMQ135 );
    client.publish(info3,cstrPolvo );
+   // If no conection 
+   if(true){
+      storeData(cstr,cstrMQ135,cstrPolvo);
+    }
    delay(sample_time);
   }
 

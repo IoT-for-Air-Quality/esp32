@@ -120,7 +120,7 @@ void setup() {
         //--------------------------------------------
 
         // Write
-        writeStringNVS(my_handle, "id", "0");        
+        writeStringNVS(my_handle, "id", "62");        
 
          // Read
         readStringNVS(my_handle,"id");
@@ -131,7 +131,7 @@ void setup() {
         //--------------------------------------------
 
         // Write
-        writeStringNVS(my_handle, "wifi-ssid", "");        
+        writeStringNVS(my_handle, "wifi-ssid", "Ana");        
 
          // Read
         readStringNVS(my_handle,"wifi-ssid");
@@ -189,6 +189,16 @@ void setup() {
 
          // Read
         readIntNVS(my_handle,"mobile");
+
+        //--------------------------------------------
+        //                  data-to-send
+        //--------------------------------------------
+
+        // Write
+        writeIntNVS(my_handle, "data-to-send", 0);        
+
+         // Read
+        readIntNVS(my_handle,"data-to-send");
 
 
 
