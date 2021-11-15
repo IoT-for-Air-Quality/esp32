@@ -3,6 +3,7 @@
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEServer.h>
+#include <HTTPClient.h>
 #include "BluetoothSerial.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
@@ -16,6 +17,7 @@
 #include "freertos/task.h"
 #include "freertos/queue.h"
 #include "esp_system.h"
+
 
 #define FORMAT_SPIFFS_IF_FAILED true
 char * id;
@@ -79,6 +81,26 @@ float ppmMQ135 = 0;
 
 boolean transmitingData;
 
+
+//--------------------------------------------------------------
+//              Split string
+//--------------------------------------------------------------
+ String getValue(String data, char separator, int index)
+{
+  int found = 0;
+  int strIndex[] = {0, -1};
+  int maxIndex = data.length()-1;
+
+  for(int i=0; i<=maxIndex && found<=index; i++){
+    if(data.charAt(i)==separator || i==maxIndex){
+        found++;
+        strIndex[0] = strIndex[1]+1;
+        strIndex[1] = (i == maxIndex) ? i+1 : i;
+    }
+  }
+
+  return found>index ? data.substring(strIndex[0], strIndex[1]) : "";
+}
 
 
 
@@ -547,9 +569,9 @@ void configFiles(){
       Serial.println("Failed to obtain time");
       return;
     }   
-  strftime(fileCO,30, "/CO#%Y-%b-%d.txt", &timeinfo);
-  strftime(fileCO2,30, "/CO2#%Y-%b-%d.txt", &timeinfo);
-  strftime(filePM,30, "/PM#%Y-%b-%d.txt", &timeinfo);
+  strftime(fileCO,30, "/CO#%Y-%m-%d.txt", &timeinfo);
+  strftime(fileCO2,30, "/CO2#%Y-%m-%d.txt", &timeinfo);
+  strftime(filePM,30, "/PM#%Y-%m-%d.txt", &timeinfo);
   //Check if files exist
   if (!SPIFFS.exists(fileCO)){
     writeFile(SPIFFS, fileCO, "CO data\r\n");  
@@ -599,10 +621,94 @@ void storeData(char * coValue, char * co2Value, char * pmValue ){
 //              Upload to server the stored Data and erase files if completed
 //--------------------------------------------------------------
 void uploadStoredData(){
+  HTTPClient httpClient;
   char * dirname = "/";
+  uint8_t levels = 0;
+  fs::FS &fs = SPIFFS;
   Serial.println("Uploading previous data");
-  listDir(SPIFFS, "/", 0);
-}
+  Serial.printf("Listing directory: %s\r\n", dirname);
+
+    File root = fs.open(dirname);
+    if(!root){
+        Serial.println("- failed to open directory");
+        return;
+    }
+    if(!root.isDirectory()){
+        Serial.println(" - not a directory");
+        return;
+    }
+
+    File file = root.openNextFile();
+    while(file){
+        if(file.isDirectory()){
+            Serial.print("  DIR : ");
+            Serial.println(file.name());
+            if(levels){
+                listDir(fs, file.name(), levels -1);
+            }
+        } else {
+            Serial.print("  FILE: ");
+            Serial.print(file.name());
+            Serial.print("\tSIZE: ");
+            Serial.println(file.size());
+            Serial.printf("Reading file: %s\r\n", file.name());
+            if(!file || file.isDirectory()){
+                Serial.println("- failed to open file for reading");
+                return;
+            }
+        
+            Serial.println("- read from file:");
+            String fileWithoutExtension;
+            String varFile;
+            String variable;
+            
+            String day;
+            fileWithoutExtension =  getValue(file.name(),'.',0);
+            varFile =  getValue(fileWithoutExtension,'#',0);
+            day =  getValue(fileWithoutExtension,'#',1);
+    
+            
+
+            if(varFile.equals("/CO")){
+              variable="1";
+            } else if(varFile.equals("/CO2")){
+                variable="2";
+            } else if(varFile.equals("/PM")){
+               variable="3";
+            } else{
+               variable="4";
+            }
+            
+            
+         
+            String base = "http://35.211.127.202:3000/measurement?device="+(String)id +"&variable="+variable+"&timestamp="+day+"T";
+            String linea;
+            String hora;
+            String valor;
+            String request;
+            
+      while(file.available()){
+              linea=file.readStringUntil('\n');
+              hora = getValue(linea,'-',0);
+              valor = getValue(linea,'-',1);
+              valor.trim();
+              if(valor != NULL){
+                request = base + hora + "&value=" + valor;
+                Serial.println(request);
+                delay(100);
+                httpClient.begin(request.c_str());
+                int httpResponseCode = httpClient.POST("");
+                Serial.println(String(httpResponseCode));        
+                }
+              
+              
+            }
+            file.close();
+            
+        }
+        file = root.openNextFile();
+    }
+} 
 
 //--------------------------------------------------------------
 //              Connect to a wifi network
@@ -664,6 +770,7 @@ void keepWifiAlive(void * parameters){
      configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
      printLocalTime();
      uploadStoredData();
+     clearDir(SPIFFS, "/", 0);
      configFiles();
      listDir(SPIFFS, "/", 0);
    
@@ -1044,25 +1151,7 @@ void callback(esp_spp_cb_event_t event, esp_spp_cb_param_t *param){
 }
 
 
-//--------------------------------------------------------------
-//              Split string
-//--------------------------------------------------------------
- String getValue(String data, char separator, int index)
-{
-  int found = 0;
-  int strIndex[] = {0, -1};
-  int maxIndex = data.length()-1;
 
-  for(int i=0; i<=maxIndex && found<=index; i++){
-    if(data.charAt(i)==separator || i==maxIndex){
-        found++;
-        strIndex[0] = strIndex[1]+1;
-        strIndex[1] = (i == maxIndex) ? i+1 : i;
-    }
-  }
-
-  return found>index ? data.substring(strIndex[0], strIndex[1]) : "";
-}
 
 
 //--------------------------------------------------------------

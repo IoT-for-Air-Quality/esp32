@@ -2,6 +2,7 @@
 #include "SPIFFS.h"
 #include <WiFi.h>
 #include "time.h"
+#include <HTTPClient.h>
 
 #define FORMAT_SPIFFS_IF_FAILED true
 
@@ -11,7 +12,7 @@ const char* password   = "nico1234";
 const char* ntpServer = "pool.ntp.org";
 const long  gmtOffset_sec = -5*3600;
 const int   daylightOffset_sec = 3600;
-char fileCO[30];
+char fileCO[3000];
 char fileCO2[30];
 char filePM[30];
 int i;
@@ -263,8 +264,8 @@ void setup()
   printLocalTime();
 
   //disconnect WiFi as it's no longer needed
-  WiFi.disconnect(true);
-  WiFi.mode(WIFI_OFF);
+//  WiFi.disconnect(true);
+//  WiFi.mode(WIFI_OFF);
 
    if(!SPIFFS.begin(FORMAT_SPIFFS_IF_FAILED)){
         Serial.println("SPIFFS Mount Failed");
@@ -291,18 +292,15 @@ Serial.println();
 Serial.println();
 //clearDir(SPIFFS, "/", 0);
 configFiles();
-listDir(SPIFFS, "/", 0);
-    
+ 
 
   
-    Serial.println(&timeinfo, "%A, %B %d %Y %H:%M:%S");
-    char * filename = "/hello.txt";
     
 //    writeFile(SPIFFS, fullDate, "Hello ");
 //    appendFile(SPIFFS, fullDate, "World!\r\n");
     //readFile(SPIFFS, "/hello.txt");
     //renameFile(SPIFFS, "/hello.txt", "/foo.txt");
-    readFile(SPIFFS, fileCO2);
+//    readFile(SPIFFS, fileCO2);
     //deleteFile(SPIFFS, "/foo.txt");
     //testFileIO(SPIFFS, "/test.txt");
     //deleteFile(SPIFFS, "/test.txt");
@@ -330,18 +328,137 @@ void storeData(char * coValue, char * co2Value, char * pmValue ){
   appendFile(SPIFFS, filePM, "World!\r\n");
 
 }
+
+
+
+//--------------------------------------------------------------
+//              Split string
+//--------------------------------------------------------------
+ String getValue(String data, char separator, int index)
+{
+  int found = 0;
+  int strIndex[] = {0, -1};
+  int maxIndex = data.length()-1;
+
+  for(int i=0; i<=maxIndex && found<=index; i++){
+    if(data.charAt(i)==separator || i==maxIndex){
+        found++;
+        strIndex[0] = strIndex[1]+1;
+        strIndex[1] = (i == maxIndex) ? i+1 : i;
+    }
+  }
+
+  return found>index ? data.substring(strIndex[0], strIndex[1]) : "";
+}
+
+  //-------------------------------------------
+
   
- 
+  //-------------------------------------------
+  //-------------------------------------------
+  
+  //-------------------------------------------
+  //-------------------------------------------
+void uploadStoredData(){
+  HTTPClient httpClient;
+  char * dirname = "/";
+  uint8_t levels = 0;
+  fs::FS &fs = SPIFFS;
+  Serial.println("Uploading previous data");
+  Serial.printf("Listing directory: %s\r\n", dirname);
+
+    File root = fs.open(dirname);
+    if(!root){
+        Serial.println("- failed to open directory");
+        return;
+    }
+    if(!root.isDirectory()){
+        Serial.println(" - not a directory");
+        return;
+    }
+
+    File file = root.openNextFile();
+    while(file){
+        if(file.isDirectory()){
+            Serial.print("  DIR : ");
+            Serial.println(file.name());
+            if(levels){
+                listDir(fs, file.name(), levels -1);
+            }
+        } else {
+            Serial.print("  FILE: ");
+            Serial.print(file.name());
+            Serial.print("\tSIZE: ");
+            Serial.println(file.size());
+            Serial.printf("Reading file: %s\r\n", file.name());
+            if(!file || file.isDirectory()){
+                Serial.println("- failed to open file for reading");
+                return;
+            }
+        
+            Serial.println("- read from file:");
+            String fileWithoutExtension;
+            String varFile;
+            String variable;
+            
+            String day;
+            fileWithoutExtension =  getValue(file.name(),'.',0);
+            varFile =  getValue(fileWithoutExtension,'#',0);
+            day =  getValue(fileWithoutExtension,'#',1);
+    
+            
+
+            if(varFile.equals("/CO")){
+              variable="1";
+            } else if(varFile.equals("/CO2")){
+                variable="2";
+            } else if(varFile.equals("/PM")){
+               variable="3";
+            } else{
+               variable="4";
+            }
+            
+            
+            int id = 23;
+            String base = "http://192.168.0.4:3000/measurement?device="+(String)id +"&variable="+variable+"&timestamp="+day+"T";
+            String linea;
+            String hora;
+            String valor;
+            String request;
+            
+      while(file.available()){
+              linea=file.readStringUntil('\n');
+              hora = getValue(linea,'-',0);
+              valor = getValue(linea,'-',1);
+              valor.trim();
+              if(valor != NULL){
+                request = base + hora + "&value=" + valor;
+                Serial.println(request);
+                delay(100);
+                httpClient.begin(request.c_str());
+                int httpResponseCode = httpClient.POST("");
+                Serial.println(String(httpResponseCode));        
+                }
+              
+              
+            }
+            file.close();
+            
+        }
+        file = root.openNextFile();
+    }
+} 
 
 void loop()
 {
-  delay(100000);
-  i=i+1;
-  Serial.println(i);
+//  delay(100000);
+  
 //  storeData("2.2","5.3","7.5");
-  if(i>10)
+  if(i<1)
   {
-    readFile(SPIFFS, fileCO);
+    i=i+1;
+uploadStoredData();
+//clearDir(SPIFFS, "/", 0);
     
     
     }
