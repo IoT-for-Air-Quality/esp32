@@ -576,10 +576,22 @@ void storeData(char * coValue, char * co2Value, char * pmValue ){
   strcat(lineCO,"-");
   strcat(lineCO,coValue);
   strcat(lineCO,"\r\n");
+
+  char lineCO2 [16];
+  strcpy(lineCO2,hour);
+  strcat(lineCO2,"-");
+  strcat(lineCO2,co2Value);
+  strcat(lineCO2,"\r\n");
+
+  char linePM [16];
+  strcpy(linePM,hour);
+  strcat(linePM,"-");
+  strcat(linePM,pmValue);
+  strcat(linePM,"\r\n");
  
   appendFile(SPIFFS, fileCO, lineCO);
-  appendFile(SPIFFS, fileCO2, "World!\r\n");
-  appendFile(SPIFFS, filePM, "World!\r\n");
+  appendFile(SPIFFS, fileCO2, lineCO2);
+  appendFile(SPIFFS, filePM, linePM);
 
 }
 
@@ -587,9 +599,9 @@ void storeData(char * coValue, char * co2Value, char * pmValue ){
 //              Upload to server the stored Data and erase files if completed
 //--------------------------------------------------------------
 void uploadStoredData(){
+  char * dirname = "/";
   Serial.println("Uploading previous data");
-  
-
+  listDir(SPIFFS, "/", 0);
 }
 
 //--------------------------------------------------------------
