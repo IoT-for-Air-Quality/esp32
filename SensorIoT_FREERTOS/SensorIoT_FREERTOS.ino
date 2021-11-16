@@ -4,6 +4,7 @@
 #include <BLEUtils.h>
 #include <BLEServer.h>
 #include <HTTPClient.h>
+#include <sstream>
 #include "BluetoothSerial.h"
 #include "esp_system.h"
 #include "nvs_flash.h"
@@ -584,38 +585,7 @@ void configFiles(){
   } 
 }
 
-void storeData(char * coValue, char * co2Value, char * pmValue ){
-  struct tm timeinfo;
-    if(!getLocalTime(&timeinfo)){
-      Serial.println("Failed to obtain time");
-      return;
-    }
-  char hour[9];
-  strftime(hour,9, "%H:%M:%S", &timeinfo);
 
-  char lineCO [16];
-  strcpy(lineCO,hour);
-  strcat(lineCO,"-");
-  strcat(lineCO,coValue);
-  strcat(lineCO,"\r\n");
-
-  char lineCO2 [16];
-  strcpy(lineCO2,hour);
-  strcat(lineCO2,"-");
-  strcat(lineCO2,co2Value);
-  strcat(lineCO2,"\r\n");
-
-  char linePM [16];
-  strcpy(linePM,hour);
-  strcat(linePM,"-");
-  strcat(linePM,pmValue);
-  strcat(linePM,"\r\n");
- 
-  appendFile(SPIFFS, fileCO, lineCO);
-  appendFile(SPIFFS, fileCO2, lineCO2);
-  appendFile(SPIFFS, filePM, linePM);
-
-}
 
 //--------------------------------------------------------------
 //              Upload to server the stored Data and erase files if completed
@@ -711,95 +681,6 @@ void uploadStoredData(){
 } 
 
 //--------------------------------------------------------------
-//              Connect to a wifi network
-//--------------------------------------------------------------
-void configureWifi(){
-   printf("\n");
-   WiFi.mode(WIFI_STA);
-   printf("WiFi mode configurated STA \n");
-   printf("Disconnecting to current network ... ");
-   WiFi.disconnect();
-   printf("Done \n");
-   delay(100);
-
-   printf("Connecting to %s ... ", wifi_ssid);
-   WiFi.begin(wifi_ssid, wifi_password);
-
-   while (WiFi.status() != WL_CONNECTED) {
-      delay(500);
-   }
-   printf("Done \n");
-   
-   IPAddress myIP = WiFi.localIP();
-   printf("Device IP: %s \n",myIP);
-   //Updates time for the esp32
-   printLocalTime();
-   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-   printLocalTime();
-  }
-//--------------------------------------------------------------
-//              Keep wifi alive
-//--------------------------------------------------------------
-void keepWifiAlive(void * parameters){
-  for(;;){
-    if(WiFi.status()==WL_CONNECTED){
-        vTaskDelay(10000/portTICK_PERIOD_MS);
-        continue;
-      }
-      //
-      printf("\n");
-     WiFi.mode(WIFI_STA);
-     printf("WiFi mode configurated STA \n");
-     printf("Disconnecting to current network ... ");
-     WiFi.disconnect();
-     printf("Done \n");
-   
-  
-     printf("Connecting to %s ... ", wifi_ssid);
-     WiFi.begin(wifi_ssid, wifi_password);
-  
-     while (WiFi.status() != WL_CONNECTED) {
-        vTaskDelay(10000/portTICK_PERIOD_MS);
-        continue;
-     }
-     printf("Done \n");
-     
-     IPAddress myIP = WiFi.localIP();
-     printf("Device IP: %s \n",myIP);
-     //Updates time for the esp32
-     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
-     printLocalTime();
-     uploadStoredData();
-     clearDir(SPIFFS, "/", 0);
-     configFiles();
-     listDir(SPIFFS, "/", 0);
-   
-
-    }
-  
-  }
-
-
-//--------------------------------------------------------------
-//              Blink wifi not connected
-//--------------------------------------------------------------
-void blinkNoConnection(void * parameters){
-  for(;;){
-  if(WiFi.status()==WL_CONNECTED){ 
-    vTaskDelay(10000/portTICK_PERIOD_MS);
-    continue;
-  }
-//   Serial.println("Desonectadisimo");
-   
-    digitalWrite(LED_BUILTIN, HIGH);
-    vTaskDelay(500/portTICK_PERIOD_MS);
-    digitalWrite(LED_BUILTIN, LOW);
-    vTaskDelay(500/portTICK_PERIOD_MS);}
-    
-}
-
-
-//--------------------------------------------------------------
 //              BLE CHARACTERISTICS
 //--------------------------------------------------------------
 #define SERVICE_UUID        "0000180A-0000-1000-8000-00805F9B34FB"
@@ -814,6 +695,16 @@ void blinkNoConnection(void * parameters){
 #define CHARACTERISTIC_UUID_WIFI_PASS "00003002-0000-1000-8000-00805F9B34FB"
 #define CHARACTERISTIC_UUID_WIFI_PASS2 "00004002-0000-1000-8000-00805F9B34FB"
 
+#define CHARACTERISTIC_UUID_WIFI_STATUS "00005001-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_WIFI_STRENGTH "00005002-0000-1000-8000-00805F9B34FB"
+
+#define CHARACTERISTIC_UUID_SPIFFS_SIZE "00006001-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_SPIFFS_USED "00006002-0000-1000-8000-00805F9B34FB"
+
+#define CHARACTERISTIC_UUID_RESTART "00007001-0000-1000-8000-00805F9B34FB"
+#define CHARACTERISTIC_UUID_RESET "00007002-0000-1000-8000-00805F9B34FB"
+
+
 
 BLECharacteristic *pCharacteristicName;
 BLECharacteristic *pCharacteristicID;
@@ -827,8 +718,18 @@ BLECharacteristic *pCharacteristicSSID;
 BLECharacteristic *pCharacteristicPASS;
 BLECharacteristic *pCharacteristicPASS2;
 
+BLECharacteristic *pCharacteristicWiFiStatus;
+BLECharacteristic *pCharacteristicWiFiStrength;
+
+BLECharacteristic *pCharacteristicSPIFFSsize;
+BLECharacteristic *pCharacteristicSPIFFSused;
+
+BLECharacteristic *pCharacteristicRestart;
+BLECharacteristic *pCharacteristicReset;
+
 class MyCallbacks: public BLECharacteristicCallbacks {
     void onWrite(BLECharacteristic *pCharacteristic) {
+      printf("llego");
       std::string rxValue = pCharacteristic->getValue();
       String dataRecibed;
       if (rxValue.length() > 0) {
@@ -859,6 +760,15 @@ class MyCallbacks: public BLECharacteristicCallbacks {
         delay(5000);
         configureWifi();
         }
+      if ( (pCharacteristic->getUUID()).equals(BLEUUID(CHARACTERISTIC_UUID_RESTART))  ){
+        printf("Reiniciando dispositivo");
+        delay(3000);
+        ESP.restart();
+        }
+        
+      if ( (pCharacteristic->getUUID()).equals(BLEUUID(CHARACTERISTIC_UUID_RESET))  ){
+        printf("Reseteando dispositivo");
+        }
       
       
     }
@@ -869,7 +779,8 @@ class MyCallbacks: public BLECharacteristicCallbacks {
 void initializeCharacteristics(){
   BLEDevice::init("AQ-IoT Node");
   BLEServer *pServer = BLEDevice::createServer();
-  BLEService *pService = pServer->createService(SERVICE_UUID);
+  //numHandles = (# of Characteristics)*2 + (# of Services) + (# of Characteristics with BLE2902)
+  BLEService *pService = pServer->createService(BLEUUID(SERVICE_UUID),50);
   pCharacteristicName = pService->createCharacteristic(
                                          CHARACTERISTIC_NAME_UUID,
                                          BLECharacteristic::PROPERTY_READ |
@@ -926,6 +837,31 @@ void initializeCharacteristics(){
                                          BLECharacteristic::PROPERTY_READ |
                                          BLECharacteristic::PROPERTY_WRITE
                                        );
+  pCharacteristicWiFiStatus = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID_WIFI_STATUS,
+                                         BLECharacteristic::PROPERTY_READ
+                                       );
+  pCharacteristicWiFiStrength = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID_WIFI_STRENGTH,
+                                         BLECharacteristic::PROPERTY_READ
+                                       );
+  pCharacteristicSPIFFSsize = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID_SPIFFS_SIZE,
+                                         BLECharacteristic::PROPERTY_READ
+                                       );
+  pCharacteristicSPIFFSused = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID_SPIFFS_USED,
+                                         BLECharacteristic::PROPERTY_READ
+                                       );
+
+  pCharacteristicRestart = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID_RESTART,
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
+  pCharacteristicReset = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID_RESET,
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
 
   pCharacteristicName->setValue("Sensor calidad aire");
   pCharacteristicName->setCallbacks(new MyCallbacks());
@@ -947,6 +883,22 @@ void initializeCharacteristics(){
   pCharacteristicPASS->setCallbacks(new MyCallbacks());
   pCharacteristicPASS2->setValue(wifi_password);
   pCharacteristicPASS->setCallbacks(new MyCallbacks());
+
+  pCharacteristicWiFiStatus->setValue("Disconected");
+  pCharacteristicWiFiStatus->setCallbacks(new MyCallbacks());
+  pCharacteristicWiFiStrength->setValue("0");
+  pCharacteristicWiFiStrength->setCallbacks(new MyCallbacks());
+
+  pCharacteristicSPIFFSsize->setValue("190000");
+  pCharacteristicSPIFFSsize->setCallbacks(new MyCallbacks());
+  pCharacteristicSPIFFSused->setValue("0");
+  pCharacteristicSPIFFSused->setCallbacks(new MyCallbacks());
+
+  pCharacteristicRestart->setValue("0");
+  pCharacteristicRestart->setCallbacks(new MyCallbacks());
+  pCharacteristicReset->setValue("0");
+  pCharacteristicReset->setCallbacks(new MyCallbacks());
+  
   pService->start();
   // BLEAdvertising *pAdvertising = pServer->getAdvertising();  // this still is working for backward compatibility
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
@@ -961,6 +913,178 @@ void initializeCharacteristics(){
   
   }
 
+//--------------------------------------------------------------
+//              Used space
+//--------------------------------------------------------------
+void usedSPIFFS(fs::FS &fs){
+  long usedSpace = 0;
+  File root = fs.open("/");
+    if(!root){
+        Serial.println("- failed to open directory");
+        return;
+    }
+    
+
+    File file = root.openNextFile();
+    while(file){
+        if(file.isDirectory()){
+            
+        } else {
+            usedSpace = usedSpace + file.size();
+            
+        }
+        file = root.openNextFile();
+    }
+    Serial.print("USED SPACE: ");
+    Serial.println(usedSpace);
+  
+    std::string space;
+    std::stringstream strstream;
+    strstream << usedSpace;
+    strstream >> space;
+    pCharacteristicSPIFFSused->setValue(space);
+  }
+
+
+//--------------------------------------------------------------
+//              Store data
+//--------------------------------------------------------------
+void storeData(char * coValue, char * co2Value, char * pmValue ){
+  struct tm timeinfo;
+    if(!getLocalTime(&timeinfo)){
+      Serial.println("Failed to obtain time");
+      return;
+    }
+  char hour[9];
+  strftime(hour,9, "%H:%M:%S", &timeinfo);
+
+  char lineCO [16];
+  strcpy(lineCO,hour);
+  strcat(lineCO,"-");
+  strcat(lineCO,coValue);
+  strcat(lineCO,"\r\n");
+
+  char lineCO2 [16];
+  strcpy(lineCO2,hour);
+  strcat(lineCO2,"-");
+  strcat(lineCO2,co2Value);
+  strcat(lineCO2,"\r\n");
+
+  char linePM [16];
+  strcpy(linePM,hour);
+  strcat(linePM,"-");
+  strcat(linePM,pmValue);
+  strcat(linePM,"\r\n");
+ 
+  appendFile(SPIFFS, fileCO, lineCO);
+  appendFile(SPIFFS, fileCO2, lineCO2);
+  appendFile(SPIFFS, filePM, linePM);
+  usedSPIFFS(SPIFFS);
+
+}
+//--------------------------------------------------------------
+//              Connect to a wifi network
+//--------------------------------------------------------------
+void configureWifi(){
+   printf("\n");
+   WiFi.mode(WIFI_STA);
+   printf("WiFi mode configurated STA \n");
+   printf("Disconnecting to current network ... ");
+   WiFi.disconnect();
+   printf("Done \n");
+   delay(100);
+
+   printf("Connecting to %s ... ", wifi_ssid);
+   WiFi.begin(wifi_ssid, wifi_password);
+
+   while (WiFi.status() != WL_CONNECTED) {
+      delay(500);
+   }
+   printf("Done \n");
+   
+   IPAddress myIP = WiFi.localIP();
+   printf("Device IP: %s \n",myIP);
+   //Updates time for the esp32
+   printLocalTime();
+   configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+   printLocalTime();
+  }
+//--------------------------------------------------------------
+//              Keep wifi alive
+//--------------------------------------------------------------
+void keepWifiAlive(void * parameters){
+  for(;;){
+    if(WiFi.status()==WL_CONNECTED){
+        long rssi = WiFi.RSSI();
+        Serial.println("RSSI");
+        Serial.println(rssi);
+        std::string number;
+        std::stringstream strstream;
+        strstream << rssi;
+        strstream >> number;
+        pCharacteristicWiFiStrength->setValue(number);
+    
+        vTaskDelay(10000/portTICK_PERIOD_MS);
+        
+        continue;
+      }
+      //
+      printf("\n");
+     WiFi.mode(WIFI_STA);
+     printf("WiFi mode configurated STA \n");
+     printf("Disconnecting to current network ... ");
+     WiFi.disconnect();
+     printf("Done \n");
+     
+     pCharacteristicWiFiStatus->setValue("Disconnected");
+   
+  
+     printf("Connecting to %s ... ", wifi_ssid);
+     WiFi.begin(wifi_ssid, wifi_password);
+  
+     while (WiFi.status() != WL_CONNECTED) {
+        vTaskDelay(10000/portTICK_PERIOD_MS);
+        continue;
+     }
+     printf("Done \n");
+     
+     IPAddress myIP = WiFi.localIP();
+     printf("Device IP: %s \n",myIP);
+     pCharacteristicWiFiStatus->setValue("Connected");
+     long rssi = WiFi.RSSI();
+     //Updates time for the esp32
+     configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+     printLocalTime();
+     usedSPIFFS(SPIFFS);
+     uploadStoredData();
+     clearDir(SPIFFS, "/", 0);
+     configFiles();
+     listDir(SPIFFS, "/", 0);
+     usedSPIFFS(SPIFFS);
+   
+
+    }
+  
+  }
+
+
+//--------------------------------------------------------------
+//              Blink wifi not connected
+//--------------------------------------------------------------
+void blinkNoConnection(void * parameters){
+  for(;;){
+  if(WiFi.status()==WL_CONNECTED){ 
+    vTaskDelay(10000/portTICK_PERIOD_MS);
+    continue;
+  }
+//   Serial.println("Desonectadisimo");
+   
+    digitalWrite(LED_BUILTIN, HIGH);
+    vTaskDelay(500/portTICK_PERIOD_MS);
+    digitalWrite(LED_BUILTIN, LOW);
+    vTaskDelay(500/portTICK_PERIOD_MS);}
+    
+}
 
 
 
@@ -974,6 +1098,8 @@ void setup() {
    pinMode(ledPowerDust,OUTPUT);
    Serial.begin(115200);
    loadConfigNVS();
+   initializeCharacteristics(); 
+   
    if(strcmp(id, "0") == 0){}else{
 //   configureWifi();
     //Wifi
@@ -997,8 +1123,7 @@ void setup() {
     CONFIG_ARDUINO_RUNNING_CORE
     );
     
-    }
-   initializeCharacteristics();  
+    } 
    // Initialize SPIFFS
    if(!SPIFFS.begin(FORMAT_SPIFFS_IF_FAILED)){
         Serial.println("SPIFFS Mount Failed");
